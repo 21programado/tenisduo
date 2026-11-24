@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Mando Tenis 2v2</title>
+<script src="/static/socket.io.min.js"></script>
+<style>
+  :root { --color:#8a97a8; }
+  * { box-sizing: border-box; }
+  body { margin:0; height:100dvh; background:#080b10; color:#e8edf5; font-family: Bahnschrift, "Segoe UI", system-ui, sans-serif;
+         display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:12px;
+         touch-action:none; user-select:none; -webkit-user-select:none; overflow:hidden; }
+  #titulo { margin:0; font-size:20px; color:var(--color); text-align:center; }
+  #marcador { font-size:44px; font-weight:700; font-variant-numeric:tabular-nums; }
+  #marcador .a { color:#2bb8ff; } #marcador .b { color:#ff5d5d; }
+  #zona { touch-action:none; position:relative; width:100%; flex:1; max-height:70dvh; background:#0c121b; border:2px solid var(--color); border-radius:18px; overflow:hidden; }
+  #zona::after { white-space:pre-line; content:"Deslizá un dedo arriba y abajo."; position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+                 color:#445166; font-size:18px; pointer-events:none; text-align:center; padding:20px; }
+  #zona.tocando::after { opacity:0; }
+  #paleta { position:absolute; left:calc(50% - 9px); width:18px; height:20%; top:40%; border-radius:9px; background:var(--color); opacity:.85; }
+  #btn-revancha { display:none; padding:14px 28px; font:inherit; font-size:19px; font-weight:700; border:0; border-radius:12px; background:#3ddc97; color:#06210f; }
+  #btn-pausa { display:none; padding:10px 22px; font:inherit; font-size:16px; font-weight:700; border:0; border-radius:12px; background:#1b2533; color:#e8edf5; }
+</style>
+</head>
+<body>
+<h2 id="titulo">Conectando…</h2>
+<div id="marcador"><span class="a">0</span> – <span class="b">0</span></div>
+<div id="zona"><div id="paleta"></div></div>
+<button id="btn-revancha">¡Estoy listo!</button>
+<button id="btn-pausa">Pausar</button>
+
+<script>
+const socket = io();
+const $ = (id) => document.getElementById(id);
+const zona = $("zona"), paleta = $("paleta"), btn = $("btn-revancha"), btnP = $("btn-pausa");
+const COLOR = { 1: "#2bb8ff", 2: "#ff5d5d" };
+let yo = 0, equipo = 0, pend = null, rolMsg = "";
+
+function poner(color, txt) { document.documentElement.style.setProperty("--color", color); $("titulo").textContent = txt; rolMsg = txt; }
+
+socket.on("connect", () => { if (!yo) poner("#8a97a8", "Conectado"); });
+socket.on("disconnect", () => { yo = 0; equipo = 0; poner("#8a97a8", "Reconectando…"); });
+socket.on("rol", (d) => {
+  yo = d.jugador; equipo = d.equipo;
+  if (yo) poner(COLOR[equipo], `Sos ${d.nombre}`);
+  else poner("#8a97a8", "Sala llena: ya hay 4 jugadores");
+  zona.style.opacity = yo ? 1 : 0.35;
+});
+socket.on("marcador", (m) => {
+  $("marcador").innerHTML = `<span class="a">${m.p1}</span> – <span class="b">${m.p2}</span>`;
+  const listo = m.listos.includes(yo), espera = yo && m.completa && !m.jugando;
+  btn.style.display = espera && !listo ? "block" : "none";
+  btn.textContent = m.ganador ? "Revancha" : "¡Estoy listo!";
+  btnP.style.display = yo && m.jugando && !m.ganador ? "block" : "none";
+  if (yo) {
+    if (m.ganador) $("titulo").textContent = (m.ganador === equipo ? "¡Ganaron!" : "Perdieron") + (listo ? " · esperando al resto…" : "");
+    else if (espera) $("titulo").textContent = listo ? "Esperando a los demás…" : "Tocá el botón cuando estés listo";
+    else if (m.jugando) $("titulo").textContent = rolMsg;
+  }
+  if (m.anota) navigator.vibrate?.(m.ganador ? (m.ganador === equipo ? [80, 60, 80] : 200) : (m.anota !== equipo ? 120 : 0));
+});
+socket.on("sonido", (d) => { if (d.tipo === "paleta" && d.lado === yo) navigator.vibrate?.(18); });
+btn.onclick = () => socket.emit("listo");
+btnP.onclick = () => socket.emit("pausar");
+socket.on("pausa", (d) => {
+  btnP.textContent = d.pausado ? "Reanudar" : "Pausar";
+  $("titulo").textContent = d.pausado ? "Juego en pausa" : rolMsg;
+  zona.style.opacity = d.pausado ? 0.5 : 1;
+});
+
+// Un dedo: la paleta sube y baja dentro de tu mitad de la cancha. Se envía como máximo una vez por frame.
+let dedo = null;
+function enviar() {
+  if (!yo || dedo === null) return;
+  const r = zona.getBoundingClientRect(), ph = r.height * 0.2;
+  const p = Math.max(0, Math.min(1, (dedo - r.top - ph / 2) / (r.height - ph)));
+  paleta.style.top = p * 80 + "%";
+  if (pend === null) requestAnimationFrame(() => { socket.volatile.emit("mover", pend); pend = null; });
+  pend = { porcentaje: p };
+}
+zona.addEventListener("pointerdown", (e) => { zona.setPointerCapture(e.pointerId); zona.classList.add("tocando"); dedo = e.clientY; enviar(); });
+zona.addEventListener("pointermove", (e) => { if (dedo !== null) { dedo = e.clientY; enviar(); } });
+const soltar = () => { dedo = null; zona.classList.remove("tocando"); };
+zona.addEventListener("pointerup", soltar);
+zona.addEventListener("pointercancel", soltar);
+</script>
+</body>
+</html>
